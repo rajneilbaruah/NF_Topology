@@ -25,7 +25,7 @@ from .networks import (
     build_model,
     MODEL_REGISTRY,
 )
-from .splines import rqs, rqs_forward, rqs_inverse
+from .splines import rqs, rqs_with_bounds, rqs_circular
 from .mlps    import MLP, ResNet, build_conditioner
 from .utils   import (
     set_seed,
@@ -58,7 +58,7 @@ __all__ = [
     "AngularSphereFlow", "CartesianNSF", "RecursiveSphereFlow",
     "build_model", "MODEL_REGISTRY",
     # Splines
-    "rqs", "rqs_forward", "rqs_inverse",
+    "rqs", "rqs_with_bounds", "rqs_circular",
     # MLPs
     "MLP", "ResNet", "build_conditioner",
     # Utils

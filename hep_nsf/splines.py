@@ -1,11 +1,29 @@
 """
 splines.py
 ==========
-Core Rational-Quadratic Spline (RQS) implementation.
+Core Rational-Quadratic Spline (RQS) implementations.
 
-Both the Cartesian R³ flow and the angular S² flow share the same
-monotone rational-quadratic bijection.  This module provides a single,
-well-tested implementation that every network in this package relies on.
+Three public functions are provided:
+
+rqs
+    Standard symmetric spline: domain ``[-bound, bound]`` → ``[-bound, bound]``.
+    Used by AngularSphereFlow (S2) and CartesianNSF (R3).
+
+rqs_with_bounds
+    General asymmetric spline: explicit ``(left, right)`` input domain and
+    ``(bottom, top)`` output domain.  Used when the physical domain is not
+    centred at zero, e.g. phi in (0, 2*pi).
+
+rqs_circular
+    Circular / periodic spline: same as rqs_with_bounds but enforces
+    d[0] == d[K] (derivative at the left edge equals derivative at the
+    right edge).  Used for the phi dimension in RecursiveSphereFlow (R2)
+    because phi lives on a circle.
+
+    The circular constraint is:
+        dp = torch.cat([dp, dp[:, 0:1]], dim=-1)
+    The MLP/parameter vector outputs only K derivatives (not K+1),
+    and the K+1-th is automatically set equal to the first.
 
 References
 ----------
@@ -18,70 +36,16 @@ import torch.nn.functional as F
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Internal core  (shared by all three public functions)
 # ---------------------------------------------------------------------------
 
-def rqs_forward(inputs: torch.Tensor,
-                w: torch.Tensor,
-                h: torch.Tensor,
-                d: torch.Tensor,
-                bound: float = 1.0,
-                eps: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
-    """Forward pass of the Rational-Quadratic Spline.
-
-    Maps ``inputs`` from the *data* domain ``[-bound, bound]`` to the
-    *base* domain ``[-bound, bound]`` and returns the log-absolute
-    determinant of the Jacobian.
-
-    Parameters
-    ----------
-    inputs : Tensor, shape ``(B, D)``
-        Values to transform.  Each element must lie inside the interval
-        ``(-bound, bound)``.  Out-of-range values are clamped with a small
-        epsilon margin.
-    w : Tensor, shape ``(B, D, K)``
-        Unnormalised bin-width logits.  Passed through softmax internally.
-    h : Tensor, shape ``(B, D, K)``
-        Unnormalised bin-height logits.  Passed through softmax internally.
-    d : Tensor, shape ``(B, D, K+1)``
-        Unnormalised derivative logits at the ``K+1`` knot positions.
-        Passed through softplus internally, with a floor of 1e-3.
-    bound : float
-        Half-width of the spline domain.  Input values are mapped from
-        ``[-bound, bound]`` to ``[-bound, bound]``.
-    eps : float
-        Small numerical epsilon used when clamping inputs.
-
-    Returns
-    -------
-    outputs : Tensor, shape ``(B, D)``
-    logabsdet : Tensor, shape ``(B, D)``
-        Log |dy/dx| per element.
-    """
-    left = right = -bound, bound  # unpack as left, right below
-    left, right = -bound, bound
-    bottom, top = -bound, bound
-    num_bins = w.shape[-1]
-
-    # Clamp inputs strictly inside the spline domain
-    inputs = inputs.clamp(left + eps, right - eps)
-
-    # Normalise spline parameters
-    widths = F.softmax(w, dim=-1) * (right - left)          # (B, D, K)
-    heights = F.softmax(h, dim=-1) * (top - bottom)         # (B, D, K)
-    derivatives = F.softplus(d) + 1e-3                      # (B, D, K+1)
-
-    # Cumulative knot positions
-    cum_widths = F.pad(torch.cumsum(widths, dim=-1), (1, 0), value=0.0) + left   # (B, D, K+1)
-    cum_heights = F.pad(torch.cumsum(heights, dim=-1), (1, 0), value=0.0) + bottom  # (B, D, K+1)
-
-    # Locate each input in the bin grid
+def _rqs_core_forward(inputs, widths, heights, derivatives,
+                      cum_widths, cum_heights, num_bins):
     bin_idx = (
         torch.searchsorted(cum_widths, inputs.unsqueeze(-1).contiguous(), right=True) - 1
-    ).clamp(0, num_bins - 1)  # (B, D, 1)
+    ).clamp(0, num_bins - 1)
 
-    # Gather local parameters
-    w_b   = torch.gather(widths,      -1, bin_idx)           # (B, D, 1)
+    w_b   = torch.gather(widths,      -1, bin_idx)
     h_b   = torch.gather(heights,     -1, bin_idx)
     d_k   = torch.gather(derivatives, -1, bin_idx)
     d_kp1 = torch.gather(derivatives, -1, bin_idx + 1)
@@ -89,65 +53,20 @@ def rqs_forward(inputs: torch.Tensor,
     y_k   = torch.gather(cum_heights, -1, bin_idx)
     s_b   = h_b / w_b
 
-    # Normalised position inside the bin
-    xi = (inputs.unsqueeze(-1) - x_k) / w_b                 # (B, D, 1)
-
-    # RQS transform
+    xi  = (inputs.unsqueeze(-1) - x_k) / w_b
     den = s_b + (d_kp1 + d_k - 2.0 * s_b) * xi * (1.0 - xi)
     num_ = h_b * (s_b * xi ** 2 + d_k * xi * (1.0 - xi))
-    outputs = (y_k + num_ / den).squeeze(-1)                 # (B, D)
+    outputs = (y_k + num_ / den).squeeze(-1)
 
-    # Log |dy/dx|
     deriv_num = s_b ** 2 * (
-        d_kp1 * xi ** 2
-        + 2.0 * s_b * xi * (1.0 - xi)
-        + d_k * (1.0 - xi) ** 2
+        d_kp1 * xi ** 2 + 2.0 * s_b * xi * (1.0 - xi) + d_k * (1.0 - xi) ** 2
     )
     logabsdet = (torch.log(deriv_num + 1e-9) - 2.0 * torch.log(den + 1e-9)).squeeze(-1)
     return outputs, logabsdet
 
 
-def rqs_inverse(inputs: torch.Tensor,
-                w: torch.Tensor,
-                h: torch.Tensor,
-                d: torch.Tensor,
-                bound: float = 1.0,
-                eps: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
-    """Inverse pass of the Rational-Quadratic Spline.
-
-    Maps ``inputs`` from the *base* domain ``[-bound, bound]`` back to
-    the *data* domain ``[-bound, bound]``.  Uses the closed-form
-    quadratic root to invert the bijection exactly.
-
-    Parameters
-    ----------
-    inputs : Tensor, shape ``(B, D)``
-        Latent values to invert.
-    w, h, d : Tensors, shape ``(B, D, K)`` / ``(B, D, K+1)``
-        Spline parameters (same convention as :func:`rqs_forward`).
-    bound : float
-    eps : float
-
-    Returns
-    -------
-    outputs : Tensor, shape ``(B, D)``
-    logabsdet : Tensor, shape ``(B, D)``
-        Log |dx/dy| per element (negative of the forward LDJ).
-    """
-    left, right = -bound, bound
-    bottom, top = -bound, bound
-    num_bins = w.shape[-1]
-
-    inputs = inputs.clamp(bottom + eps, top - eps)
-
-    widths = F.softmax(w, dim=-1) * (right - left)
-    heights = F.softmax(h, dim=-1) * (top - bottom)
-    derivatives = F.softplus(d) + 1e-3
-
-    cum_widths = F.pad(torch.cumsum(widths, dim=-1), (1, 0), value=0.0) + left
-    cum_heights = F.pad(torch.cumsum(heights, dim=-1), (1, 0), value=0.0) + bottom
-
-    # Search in height space for the inverse
+def _rqs_core_inverse(inputs, widths, heights, derivatives,
+                      cum_widths, cum_heights, num_bins):
     bin_idx = (
         torch.searchsorted(cum_heights, inputs.unsqueeze(-1).contiguous(), right=True) - 1
     ).clamp(0, num_bins - 1)
@@ -160,41 +79,119 @@ def rqs_inverse(inputs: torch.Tensor,
     y_k   = torch.gather(cum_heights, -1, bin_idx)
     s_b   = h_b / w_b
 
-    # Solve the quadratic  a*xi^2 + b*xi + c = 0
     y_rel = inputs.unsqueeze(-1) - y_k
     a = h_b * (s_b - d_k) + y_rel * (d_kp1 + d_k - 2.0 * s_b)
     b = h_b * d_k - y_rel * (d_kp1 + d_k - 2.0 * s_b)
     c = -s_b * y_rel
 
-    xi = 2.0 * c / (-b - torch.sqrt(b ** 2 - 4.0 * a * c + 1e-9))
+    xi      = 2.0 * c / (-b - torch.sqrt(b ** 2 - 4.0 * a * c + 1e-9))
     outputs = (xi * w_b + x_k).squeeze(-1)
 
-    # LDJ for inverse = negative of forward LDJ
     den = s_b + (d_kp1 + d_k - 2.0 * s_b) * xi * (1.0 - xi)
     deriv_num = s_b ** 2 * (
-        d_kp1 * xi ** 2
-        + 2.0 * s_b * xi * (1.0 - xi)
-        + d_k * (1.0 - xi) ** 2
+        d_kp1 * xi ** 2 + 2.0 * s_b * xi * (1.0 - xi) + d_k * (1.0 - xi) ** 2
     )
     logabsdet = -(torch.log(deriv_num + 1e-9) - 2.0 * torch.log(den + 1e-9)).squeeze(-1)
     return outputs, logabsdet
 
 
-def rqs(inputs: torch.Tensor,
-        w: torch.Tensor,
-        h: torch.Tensor,
-        d: torch.Tensor,
-        inverse: bool = False,
-        bound: float = 1.0,
-        eps: float = 1e-6) -> tuple[torch.Tensor, torch.Tensor]:
-    """Unified entry point: calls :func:`rqs_forward` or :func:`rqs_inverse`.
+# ---------------------------------------------------------------------------
+# 1.  Standard symmetric spline  (S2 and R3 models)
+# ---------------------------------------------------------------------------
+
+def rqs(inputs, w, h, d, inverse=False, bound=1.0, eps=1e-6):
+    """Standard RQS on [-bound, bound].  Used by S2 and R3 models."""
+    left, right = -bound, bound
+    bottom, top = -bound, bound
+    num_bins    = w.shape[-1]
+
+    inputs  = inputs.clamp(left + eps, right - eps)
+    widths  = F.softmax(w, dim=-1) * (right - left)
+    heights = F.softmax(h, dim=-1) * (top - bottom)
+    derivs  = F.softplus(d) + 1e-3
+    cw = F.pad(torch.cumsum(widths,  dim=-1), (1, 0), value=0.0) + left
+    ch = F.pad(torch.cumsum(heights, dim=-1), (1, 0), value=0.0) + bottom
+
+    if inverse:
+        return _rqs_core_inverse(inputs, widths, heights, derivs, cw, ch, num_bins)
+    return _rqs_core_forward(inputs, widths, heights, derivs, cw, ch, num_bins)
+
+
+# ---------------------------------------------------------------------------
+# 2.  General asymmetric spline  (explicit b_x / b_y domain bounds)
+# ---------------------------------------------------------------------------
+
+def rqs_with_bounds(inputs, w, h, d, inverse=False,
+                    b_x=(0.0, 1.0), b_y=(0.0, 1.0), eps=1e-6):
+    """RQS with explicit asymmetric input/output domain.
 
     Parameters
     ----------
-    inverse : bool
-        If ``False`` (default) runs the forward pass (data → base).
-        If ``True`` runs the inverse pass (base → data).
+    inputs : Tensor (B,)  or (B, 1)
+    w, h   : Tensor (B, K)
+    d      : Tensor (B, K+1)
+    b_x    : (left, right)  input domain
+    b_y    : (bottom, top)  output domain
+
+    Matches the rqs_logic(b_x=..., b_y=...) convention in the notebook.
     """
+    left,   right  = b_x
+    bottom, top    = b_y
+    num_bins       = w.shape[-1]
+
+    inputs  = inputs.clamp(left + eps, right - eps)
+    widths  = F.softmax(w, dim=-1) * (right  - left)
+    heights = F.softmax(h, dim=-1) * (top    - bottom)
+    derivs  = F.softplus(d) + 1e-3
+    cw = F.pad(torch.cumsum(widths,  dim=-1), (1, 0), value=0.0) + left
+    ch = F.pad(torch.cumsum(heights, dim=-1), (1, 0), value=0.0) + bottom
+
+    # Expand batch dim if using free (unbatched) parameters
+    if cw.shape[0] == 1 and inputs.shape[0] > 1:
+        B  = inputs.shape[0]
+        cw      = cw.expand(B, -1)
+        ch      = ch.expand(B, -1)
+        widths  = widths.expand(B, -1)
+        heights = heights.expand(B, -1)
+        derivs  = derivs.expand(B, -1)
+
+    # Core functions expect (B, D, K); here D=1 so we unsqueeze/squeeze
+    def _u(t): return t.unsqueeze(1)
     if inverse:
-        return rqs_inverse(inputs, w, h, d, bound=bound, eps=eps)
-    return rqs_forward(inputs, w, h, d, bound=bound, eps=eps)
+        out, ldj = _rqs_core_inverse(
+            _u(inputs), _u(widths), _u(heights), _u(derivs), _u(cw), _u(ch), num_bins)
+    else:
+        out, ldj = _rqs_core_forward(
+            _u(inputs), _u(widths), _u(heights), _u(derivs), _u(cw), _u(ch), num_bins)
+
+    return out.squeeze(1), ldj.squeeze(1)
+
+
+# ---------------------------------------------------------------------------
+# 3.  Circular / periodic spline  (phi dimension of R2 model)
+# ---------------------------------------------------------------------------
+
+def rqs_circular(inputs, w, h, d, inverse=False,
+                 b_x=(0.0, 6.283185307179586),
+                 b_y=(0.0, 6.283185307179586),
+                 eps=1e-6):
+    """Circular RQS with periodic derivative boundary condition.
+
+    Enforces d[0] == d[K] by appending d[:, 0] as d[:, K] before calling
+    rqs_with_bounds.  This makes the spline smooth at the wrap-around point
+    (phi = 0 == phi = 2*pi).
+
+    Parameters
+    ----------
+    inputs : Tensor (B,)
+    w, h   : Tensor (B, K)
+    d      : Tensor (B, K)   <-- only K values, NOT K+1
+    b_x, b_y : domain bounds, default (0, 2*pi)
+
+    The circular trick from the notebook:
+        dp = torch.cat([dp, dp[:, 0:1]], dim=1)
+    """
+    # Enforce periodicity: append first derivative as last
+    d_circular = torch.cat([d, d[:, 0:1]], dim=-1)   # (B, K) -> (B, K+1)
+    return rqs_with_bounds(inputs, w, h, d_circular,
+                           inverse=inverse, b_x=b_x, b_y=b_y, eps=eps)
