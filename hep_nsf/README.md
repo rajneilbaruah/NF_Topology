@@ -75,7 +75,7 @@ hep_nsf/
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/hep_nsf.git
+git clone https://github.com/rajneilbaruah/NF_Topology/
 cd hep_nsf
 
 # Create a virtual environment (recommended)
@@ -544,11 +544,11 @@ absolute NLL values.
 If you use this code in your research, please cite the relevant papers:
 
 ```bibtex
-@article{durkan2019neural,
-  title={Neural Spline Flows},
-  author={Durkan, Conor and Bekasov, Artur and Murray, Iain and Papamakarios, George},
-  journal={Advances in Neural Information Processing Systems},
-  year={2019}
+@article{topoNF26,
+  title={Neural Spline Flows  on Spheres},
+  author={Baruah, Rajneil and Ngairangbam, Vishal and Sakurai, Kazuki and Spannowsky, Michael},
+  journal={Some Journal in ML/HEP},
+  year={2026}
 }
 ```
 
@@ -556,4 +556,4 @@ If you use this code in your research, please cite the relevant papers:
 
 ## License
 
-MIT License — see `LICENSE` file for details.
+Some Creative Commons License — see `LICENSE` file for details.
