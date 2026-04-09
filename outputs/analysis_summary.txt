@@ -1,0 +1,30 @@
+HEP Neural Spline Flows — Analysis Summary
+
+Model naming:
+  s2 = RecursiveSphereFlow  physical (cos_theta,phi)  uniform S2 base
+  r2 = AngularSphereFlow    standardised (cos_theta,phi)  Gaussian R2
+  r3 = CartesianNSF         standardised (px,py,pz)  Gaussian R3
+
++----------------------+------------------+------------------+------------------+
+| Metric               |        S2        |        R2        |        R3        |
++----------------------+------------------+------------------+------------------+
+| KL (nats)            |      0.0228      |      0.0103      |      0.0625      |
+| ESS%                 |      97.4%       |      99.4%       |      88.7%       |
+| W1 cos θ             |    8.413e-02     |    4.775e-03     |    3.998e-02     |
+| W1 φ                 |    2.284e-02     |    4.530e-02     |    2.268e-01     |
+| JSD cos θ            |    1.109e-02     |    3.404e-03     |    8.231e-03     |
+| JSD φ                |    1.997e-03     |    3.372e-03     |    2.016e-02     |
+| W1 px                |    4.646e+00     |    7.626e+00     |    7.211e+01     |
+| W1 py                |    9.696e+00     |    1.469e+01     |    1.876e+01     |
+| W1 pz                |    4.207e+01     |    2.388e+00     |    2.239e+01     |
+| Unphysical %         |      0.00%       |      1.17%       |      0.00%       |
+| Radius mean (GeV)    |      500.0       |      500.0       |      496.9       |
+| Radius std  (GeV)    |       0.0        |       0.0        |       67.9       |
+| Params               |      10,625      |      21,186      |      27,555      |
++----------------------+------------------+------------------+------------------+
+
+Guide:
+  KL   : lower is better. 0 = perfect.
+  ESS% : higher is better. 100% = perfect.
+  W1   : earth-mover distance. lower is better.
+  JSD  : 0=identical, ln2=worst.

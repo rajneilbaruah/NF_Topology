@@ -1,0 +1,327 @@
+hep_nsf Test Suite
+Run: 2026-04-09 07:39:05.588521
+Data: ../datasets/NFSpheres/eemumu_mup.json
+============================================================
+
+
+hep_nsf EXHAUSTIVE TEST SUITE
+Data : ../datasets/NFSpheres/eemumu_mup.json
+Speed settings: bins=8 hdim=16 layers=1 epochs=3 bs=512
+
+============================================================
+  SECTION 1: Utils
+============================================================
+  ✓ [PASS] set_seed  (0.00s)
+  ✓ [PASS] get_device(auto)  (0.00s)
+  ✓ [PASS] get_device(cpu)  (0.00s)
+  ✓ [PASS] load_json_data  (0.01s)
+  ✓ [PASS] cartesian_to_spherical  (0.01s)
+  ✓ [PASS] spherical_to_cartesian  (0.01s)
+  ✓ [PASS] normalise  (0.08s)
+  ✓ [PASS] denormalise (round-trip)  (0.01s)
+  ✓ [PASS] make_dataloaders  (0.01s)
+  ✓ [PASS] cartesian_to_physics  (0.01s)
+  ✓ [PASS] save/load_checkpoint  (1.19s)
+  ✓ [PASS] save/load_losses  (0.00s)
+  ✓ [PASS] count_parameters  (0.00s)
+  ✓ [PASS] log_std_correction  (0.00s)
+
+============================================================
+  SECTION 2: Splines
+============================================================
+  ✓ [PASS] rqs forward+inverse round-trip  (0.00s)
+  ✓ [PASS] rqs log-det finite  (0.00s)
+  ✓ [PASS] rqs_with_bounds round-trip  (cos_theta domain)  (0.00s)
+  ✓ [PASS] rqs_with_bounds round-trip  (phi domain)  (0.00s)
+  ✓ [PASS] rqs_circular round-trip  (periodic phi)  (0.00s)
+  ✓ [PASS] rqs_circular LDJ finite (periodicity check)  (0.00s)
+  ✓ [PASS] rqs_with_bounds  num_bins=4  (0.00s)
+  ✓ [PASS] rqs_with_bounds  num_bins=16  (0.00s)
+  ✓ [PASS] rqs_with_bounds  num_bins=32  (0.00s)
+
+============================================================
+  SECTION 3: MLP / ResNet configurations
+============================================================
+  ✓ [PASS] MLP  activation=relu  (0.00s)
+  ✓ [PASS] MLP  activation=tanh  (0.00s)
+  ✓ [PASS] MLP  activation=elu  (0.00s)
+  ✓ [PASS] MLP  activation=leaky_relu  (0.00s)
+  ✓ [PASS] MLP  activation=silu  (0.00s)
+  ✓ [PASS] MLP  activation=gelu  (0.00s)
+  ✓ [PASS] MLP  num_layers=1  (0.00s)
+  ✓ [PASS] MLP  num_layers=2  (0.00s)
+  ✓ [PASS] MLP  num_layers=3  (0.00s)
+  ✓ [PASS] MLP  num_layers=4  (0.00s)
+  ✓ [PASS] MLP  hidden_dim=16  (0.00s)
+  ✓ [PASS] MLP  hidden_dim=32  (0.00s)
+  ✓ [PASS] MLP  hidden_dim=64  (0.00s)
+  ✓ [PASS] MLP  hidden_dim=128  (0.00s)
+  ✓ [PASS] MLP  dropout=0.0  (0.00s)
+  ✓ [PASS] MLP  dropout=0.1  (0.00s)
+  ✓ [PASS] MLP  dropout=0.3  (0.00s)
+  ✓ [PASS] ResNet  activation=relu  (0.02s)
+  ✓ [PASS] ResNet  activation=tanh  (0.02s)
+  ✓ [PASS] ResNet  activation=elu  (0.00s)
+  ✓ [PASS] ResNet  activation=leaky_relu  (0.00s)
+  ✓ [PASS] ResNet  activation=silu  (0.00s)
+  ✓ [PASS] ResNet  activation=gelu  (0.00s)
+  ✓ [PASS] ResNet  num_layers(blocks)=1  (0.00s)
+  ✓ [PASS] ResNet  num_layers(blocks)=2  (0.00s)
+  ✓ [PASS] ResNet  num_layers(blocks)=3  (0.00s)
+  ✓ [PASS] ResNet  hidden_dim=16  (0.00s)
+  ✓ [PASS] ResNet  hidden_dim=32  (0.00s)
+  ✓ [PASS] ResNet  hidden_dim=64  (0.00s)
+  ✓ [PASS] ResNet  dropout=0.0  layer_norm=True  (0.00s)
+  ✓ [PASS] ResNet  dropout=0.2  layer_norm=True  (0.00s)
+
+============================================================
+  SECTION 4: Model API
+============================================================
+  ✓ [PASS] forward  s2  mlp  ns=1  (0.00s)
+  ✓ [PASS] round-trip  s2  mlp  ns=1  (0.00s)
+  ✓ [PASS] log_prob  s2  mlp  ns=1  (0.00s)
+  ✓ [PASS] sample  s2  mlp  ns=1  (0.00s)
+  ✓ [PASS] forward  s2  mlp  ns=2  (0.00s)
+  ✓ [PASS] round-trip  s2  mlp  ns=2  (0.01s)
+  ✓ [PASS] log_prob  s2  mlp  ns=2  (0.00s)
+  ✓ [PASS] sample  s2  mlp  ns=2  (0.00s)
+  ✓ [PASS] forward  s2  mlp  ns=3  (0.01s)
+  ✓ [PASS] round-trip  s2  mlp  ns=3  (0.01s)
+  ✓ [PASS] log_prob  s2  mlp  ns=3  (0.01s)
+  ✓ [PASS] sample  s2  mlp  ns=3  (0.01s)
+  ✓ [PASS] forward  s2  resnet  ns=1  (0.00s)
+  ✓ [PASS] round-trip  s2  resnet  ns=1  (0.00s)
+  ✓ [PASS] log_prob  s2  resnet  ns=1  (0.00s)
+  ✓ [PASS] sample  s2  resnet  ns=1  (0.00s)
+  ✓ [PASS] forward  s2  resnet  ns=2  (0.00s)
+  ✓ [PASS] round-trip  s2  resnet  ns=2  (0.01s)
+  ✓ [PASS] log_prob  s2  resnet  ns=2  (0.00s)
+  ✓ [PASS] sample  s2  resnet  ns=2  (0.00s)
+  ✓ [PASS] forward  s2  resnet  ns=3  (0.01s)
+  ✓ [PASS] round-trip  s2  resnet  ns=3  (0.01s)
+  ✓ [PASS] log_prob  s2  resnet  ns=3  (0.01s)
+  ✓ [PASS] sample  s2  resnet  ns=3  (0.00s)
+  ✓ [PASS] forward  r2  mlp  ns=1  (0.00s)
+  ✓ [PASS] round-trip  r2  mlp  ns=1  (0.00s)
+  ✓ [PASS] log_prob  r2  mlp  ns=1  (0.00s)
+  ✓ [PASS] sample  r2  mlp  ns=1  (0.00s)
+  ✓ [PASS] forward  r2  mlp  ns=2  (0.00s)
+  ✓ [PASS] round-trip  r2  mlp  ns=2  (0.01s)
+  ✓ [PASS] log_prob  r2  mlp  ns=2  (0.00s)
+  ✓ [PASS] sample  r2  mlp  ns=2  (0.00s)
+  ✓ [PASS] forward  r2  mlp  ns=3  (0.00s)
+  ✓ [PASS] round-trip  r2  mlp  ns=3  (0.01s)
+  ✓ [PASS] log_prob  r2  mlp  ns=3  (0.00s)
+  ✓ [PASS] sample  r2  mlp  ns=3  (0.00s)
+  ✓ [PASS] forward  r2  resnet  ns=1  (0.00s)
+  ✓ [PASS] round-trip  r2  resnet  ns=1  (0.00s)
+  ✓ [PASS] log_prob  r2  resnet  ns=1  (0.00s)
+  ✓ [PASS] sample  r2  resnet  ns=1  (0.00s)
+  ✓ [PASS] forward  r2  resnet  ns=2  (0.01s)
+  ✓ [PASS] round-trip  r2  resnet  ns=2  (0.01s)
+  ✓ [PASS] log_prob  r2  resnet  ns=2  (0.00s)
+  ✓ [PASS] sample  r2  resnet  ns=2  (0.00s)
+  ✓ [PASS] forward  r2  resnet  ns=3  (0.01s)
+  ✓ [PASS] round-trip  r2  resnet  ns=3  (0.01s)
+  ✓ [PASS] log_prob  r2  resnet  ns=3  (0.01s)
+  ✓ [PASS] sample  r2  resnet  ns=3  (0.01s)
+  ✓ [PASS] forward  r3  mlp  ns=1  (0.00s)
+  ✓ [PASS] round-trip  r3  mlp  ns=1  (0.00s)
+  ✓ [PASS] log_prob  r3  mlp  ns=1  (0.00s)
+  ✓ [PASS] sample  r3  mlp  ns=1  (0.00s)
+  ✓ [PASS] forward  r3  mlp  ns=2  (0.00s)
+  ✓ [PASS] round-trip  r3  mlp  ns=2  (0.01s)
+  ✓ [PASS] log_prob  r3  mlp  ns=2  (0.00s)
+  ✓ [PASS] sample  r3  mlp  ns=2  (0.00s)
+  ✓ [PASS] forward  r3  mlp  ns=3  (0.00s)
+  ✓ [PASS] round-trip  r3  mlp  ns=3  (0.01s)
+  ✓ [PASS] log_prob  r3  mlp  ns=3  (0.00s)
+  ✓ [PASS] sample  r3  mlp  ns=3  (0.00s)
+  ✓ [PASS] forward  r3  resnet  ns=1  (0.00s)
+  ✓ [PASS] round-trip  r3  resnet  ns=1  (0.00s)
+  ✓ [PASS] log_prob  r3  resnet  ns=1  (0.00s)
+  ✓ [PASS] sample  r3  resnet  ns=1  (0.00s)
+  ✓ [PASS] forward  r3  resnet  ns=2  (0.01s)
+  ✓ [PASS] round-trip  r3  resnet  ns=2  (0.01s)
+  ✓ [PASS] log_prob  r3  resnet  ns=2  (0.00s)
+  ✓ [PASS] sample  r3  resnet  ns=2  (0.00s)
+  ✓ [PASS] forward  r3  resnet  ns=3  (0.01s)
+  ✓ [PASS] round-trip  r3  resnet  ns=3  (0.01s)
+  ✓ [PASS] log_prob  r3  resnet  ns=3  (0.01s)
+  ✓ [PASS] sample  r3  resnet  ns=3  (0.01s)
+  ✓ [PASS] build_model unknown key raises ValueError  (0.00s)
+
+============================================================
+  SECTION 5: Python API training
+============================================================
+  ✓ [PASS] train  s2  mlp  (0.28s)
+  ✓ [PASS] train  s2  resnet  (0.32s)
+  ✓ [PASS] train  r2  mlp  (0.31s)
+  ✓ [PASS] train  r2  resnet  (0.48s)
+  ✓ [PASS] train  r3  mlp  (0.33s)
+  ✓ [PASS] train  r3  resnet  (0.42s)
+  ✓ [PASS] train  r2  mlp  act=relu  (0.31s)
+  ✓ [PASS] train  r2  mlp  act=tanh  (0.32s)
+  ✓ [PASS] train  r2  mlp  act=elu  (0.31s)
+  ✓ [PASS] train  r2  mlp  act=leaky_relu  (0.33s)
+  ✓ [PASS] train  r2  mlp  act=silu  (0.41s)
+  ✓ [PASS] train  r2  mlp  act=gelu  (0.33s)
+  ✓ [PASS] train  s2  ns=1  (0.28s)
+  ✓ [PASS] train  s2  ns=2  (0.44s)
+  ✓ [PASS] train  s2  ns=3  (0.59s)
+  ✓ [PASS] train  r2  ns=1  (0.31s)
+  ✓ [PASS] train  r2  ns=2  (0.49s)
+  ✓ [PASS] train  r2  ns=3  (0.74s)
+  ✓ [PASS] train  r3  ns=1  (0.33s)
+  ✓ [PASS] train  r3  ns=2  (0.53s)
+  ✓ [PASS] train  r3  ns=3  (0.72s)
+  ✓ [PASS] train  r2  mlp  dropout=0.2  (0.30s)
+  ✓ [PASS] train  r2  plateau=True  cosine=False  (0.30s)
+  ✓ [PASS] train  r2  plateau=False  cosine=True  (0.30s)
+  ✓ [PASS] train  r2  plateau=True  cosine=True  (0.40s)
+  ✓ [PASS] train  r2  plateau=False  cosine=False  (0.31s)
+
+============================================================
+  SECTION 6: CLI training
+============================================================
+  ✓ [PASS] train  s2  defaults  (4.41s)
+  ✓ [PASS] train  r2  defaults  (4.56s)
+  ✓ [PASS] train  r3  defaults  (4.53s)
+  ✓ [PASS] train  s2  mlp  (4.37s)
+  ✓ [PASS] train  s2  resnet  (4.77s)
+  ✓ [PASS] train  r2  mlp  (4.43s)
+  ✓ [PASS] train  r2  resnet  (4.44s)
+  ✓ [PASS] train  r3  mlp  (4.49s)
+  ✓ [PASS] train  r3  resnet  (4.52s)
+  ✓ [PASS] train  r2  act=relu  (4.40s)
+  ✓ [PASS] train  r2  act=tanh  (4.84s)
+  ✓ [PASS] train  r2  act=elu  (5.06s)
+  ✓ [PASS] train  r2  act=leaky_relu  (5.27s)
+  ✓ [PASS] train  r2  act=silu  (4.67s)
+  ✓ [PASS] train  r2  act=gelu  (4.94s)
+  ✓ [PASS] train  s2  ns=1  (5.16s)
+  ✓ [PASS] train  s2  ns=2  (4.78s)
+  ✓ [PASS] train  s2  ns=3  (5.24s)
+  ✓ [PASS] train  r2  ns=1  (4.92s)
+  ✓ [PASS] train  r2  ns=2  (4.86s)
+  ✓ [PASS] train  r2  ns=3  (5.21s)
+  ✓ [PASS] train  r3  ns=1  (5.17s)
+  ✓ [PASS] train  r3  ns=2  (5.39s)
+  ✓ [PASS] train  r3  ns=3  (6.01s)
+  ✓ [PASS] train  r2  dropout=0.2  (8.62s)
+  ✓ [PASS] train  r2  no_plateau  (6.04s)
+  ✓ [PASS] train  r2  use_cosine  (5.00s)
+  ✓ [PASS] train  r2  plateau+cosine  (5.32s)
+  ✓ [PASS] train  r2  no_plateau+cosine  (6.58s)
+  ✓ [PASS] train  r2  bound=3.0  (6.41s)
+  ✓ [PASS] train  r2  bound=5.0  (4.99s)
+  ✓ [PASS] train  r2  bound=8.0  (4.56s)
+  ✓ [PASS] train  r2  hidden_dim=16  (6.03s)
+  ✓ [PASS] train  r2  hidden_dim=32  (6.87s)
+  ✓ [PASS] train  r2  hidden_dim=64  (7.30s)
+  ✓ [PASS] train  r2  num_layers=1  (6.22s)
+  ✓ [PASS] train  r2  num_layers=2  (5.02s)
+  ✓ [PASS] train  r2  num_layers=3  (4.94s)
+  ✓ [PASS] train  r2  resnet  act=relu  (4.63s)
+  ✓ [PASS] train  r2  resnet  act=tanh  (4.81s)
+  ✓ [PASS] train  r2  resnet  act=elu  (4.92s)
+
+============================================================
+  SECTION 7: Resume from checkpoint
+============================================================
+  ✓ [PASS] resume  s2  (5.18s)
+  ✓ [PASS] resume  r2  (5.83s)
+  ✓ [PASS] resume  r3  (6.18s)
+  ✓ [PASS] resume  r2  mlp  checkpoint  (5.49s)
+  ✓ [PASS] resume  r2  resnet  checkpoint  (5.15s)
+
+============================================================
+  SECTION 8: YAML config
+============================================================
+  ✓ [PASS] train via YAML config  (5.14s)
+  ✓ [PASS] YAML + CLI override model  (4.68s)
+  ✓ [PASS] train via shipped config s2_default.yaml  (4.63s)
+  ✓ [PASS] train via shipped config r2_default.yaml  (5.10s)
+  ✓ [PASS] train via shipped config r3_default.yaml  (5.38s)
+
+============================================================
+  SECTION 9: CLI sample / evaluate / plot
+============================================================
+  ✓ [PASS] sample  s2  with plots  (15.06s)
+  ✓ [PASS] sample  s2  --no_plots  (3.72s)
+  ✓ [PASS] evaluate  s2  (4.48s)
+  ✓ [PASS] plot  s2  (15.38s)
+  ✓ [PASS] sample  r2  with plots  (14.53s)
+  ✓ [PASS] sample  r2  --no_plots  (3.03s)
+  ✓ [PASS] evaluate  r2  (4.29s)
+  ✓ [PASS] plot  r2  (15.02s)
+  ✓ [PASS] sample  r3  with plots  (16.42s)
+  ✓ [PASS] sample  r3  --no_plots  (2.99s)
+  ✓ [PASS] evaluate  r3  (4.20s)
+  ✓ [PASS] plot  r3  (16.83s)
+  ✓ [PASS] sample  s2  self-describing (no arch flags)  (2.99s)
+  ✓ [PASS] sample  r2  self-describing (no arch flags)  (3.17s)
+  ✓ [PASS] sample  r3  self-describing (no arch flags)  (3.04s)
+  ✓ [PASS] sample  r2  ns=2  self-describing  (3.00s)
+  ✓ [PASS] sample  r2  resnet  self-describing  (2.98s)
+  ✓ [PASS] sample  missing checkpoint raises error  (2.92s)
+
+============================================================
+  SECTION 10: Analysis functions
+============================================================
+  ✓ [PASS] kl_divergence_kde  (0.04s)
+  ✓ [PASS] effective_sample_size  (0.02s)
+  ✓ [PASS] wasserstein_1d  (0.01s)
+  ✓ [PASS] js_divergence_1d  (0.01s)
+  ✓ [PASS] consistency_report  (0.02s)
+  ✓ [PASS] evaluate  (full suite)  (0.03s)
+  ✓ [PASS] model_summary  s2  (0.02s)
+  ✓ [PASS] model_summary  r2  (0.00s)
+  ✓ [PASS] model_summary  r3  (0.00s)
+
+============================================================
+  SECTION 11: All plotting functions
+============================================================
+  ✓ [PASS] plot_loss_curves  (0.67s)
+  ✓ [PASS] plot_marginal_1d  [angular]  (2.06s)
+  ✓ [PASS] plot_marginal_1d  [cartesian]  (1.02s)
+  ✓ [PASS] plot_marginal_2d  [angular]  (0.46s)
+  ✓ [PASS] plot_marginal_2d  [cartesian]  (1.21s)
+  ✓ [PASS] plot_mollweide_kde  [tensor input]  (0.83s)
+  ✓ [PASS] plot_mollweide_kde  [ndarray input]  (0.84s)
+  ✓ [PASS] plot_physics_comparison  (1.93s)
+  ✓ [PASS] plot_radius_distribution  (0.60s)
+  ✓ [PASS] plot_radius_distribution  [near-zero range  auto bins]  (0.36s)
+  ✓ [PASS] plot_base_mapping_s2  [s2]  (1.30s)
+  ✓ [PASS] plot_jacobian_map     [s2]  (0.62s)
+  ✓ [PASS] plot_base_mapping     [r2]  (1.71s)
+  ✓ [PASS] plot_jacobian_map     [r2]  (0.60s)
+  ✓ [PASS] plot_jacobian_map_r3  [r3]  (2.60s)
+
+============================================================
+  SECTION 12: Helper scripts (train_all / plot_all / analyse_all)
+============================================================
+  ✓ [PASS] train_all  s2+r2+r3  (7.47s)
+  ✓ [PASS] train_all  --skip r3  (5.68s)
+  ✓ [PASS] train_all  --skip s2 r2  (5.08s)
+  ✓ [PASS] plot_all  s2+r2+r3  (45.38s)
+  ✓ [PASS] plot_all  --skip r3  (29.56s)
+  ✓ [PASS] analyse_all  s2+r2+r3  (9.95s)
+  ✓ [PASS] analyse_all  --skip s2  (7.63s)
+
+============================================================
+  SECTION 13: Device availability and model forward on device
+============================================================
+  ✓ [PASS] device=cpu  forward+sample  all models  (0.05s)
+  ○ [SKIP] device=cuda  forward+sample  (0.00s)
+         | CUDA not available on this machine
+  ○ [SKIP] device=mps  forward+sample  (0.00s)
+         | MPS not available on this machine
+
+============================================================
+  TOTAL: 254 pass  0 fail  2 skip  / 256
+  Log     → test_run.log
+  Summary → test_summary.md
+============================================================
+
+Total elapsed: 9.0 min

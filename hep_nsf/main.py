@@ -1,340 +1,265 @@
 #!/usr/bin/env python
 """
-main.py
-=======
-Command-line entry point for HEP Normalising-Spline Flows.
+main.py — CLI entry point for HEP Neural Spline Flows.
 
-Supported modes (``--mode``):
-  train    — train a flow model from scratch or resume.
-  sample   — load a saved checkpoint and draw new samples.
-  evaluate — compute KL, ESS, Wasserstein on saved samples.
-  plot     — generate all diagnostic plots from a checkpoint.
+Models
+------
+  s2  RecursiveSphereFlow — physical (cos_theta, phi), uniform S2 base
+  r2  AngularSphereFlow   — standardised (cos_theta, phi), Gaussian R2 base
+  r3  CartesianNSF        — standardised (px, py, pz), Gaussian R3 base
 
-Quick-start examples
---------------------
-Train the S² (angular) flow with 2 stacked splines::
+Modes
+-----
+  train    — train from scratch or resume
+  sample   — draw samples from a checkpoint
+  evaluate — compute KL, ESS, Wasserstein
+  plot     — generate all diagnostic plots
 
-    python main.py --mode train \\
-        --model s2 --data eemumu_mup.json \\
-        --num_bins 32 --num_splines 2 \\
-        --hidden_dim 64 --num_layers 2 \\
-        --lr 1e-3 --batch_size 8192 \\
-        --epochs 5000 --patience 20 \\
-        --run_name mup_s2_k2 --save_dir checkpoints
-
-Train the R³ (Cartesian) flow with 3 stacked splines::
-
-    python main.py --mode train \\
-        --model r3 --data eemumu_mup.json \\
-        --num_bins 32 --num_splines 3 \\
-        --run_name mup_r3_k3
-
-Generate samples from a saved S² checkpoint::
-
-    python main.py --mode sample \\
-        --model s2 --checkpoint checkpoints/mup_s2_k2_best.pt \\
-        --data eemumu_mup.json \\
-        --num_samples 50000 --output_dir outputs
-
-Evaluate a saved run::
-
-    python main.py --mode evaluate \\
-        --model s2 --checkpoint checkpoints/mup_s2_k2_best.pt \\
-        --data eemumu_mup.json
-
-Cluster usage
--------------
-All arguments can be set via a YAML config file with ``--config``::
-
-    python main.py --config configs/s2_default.yaml
-
-Command-line arguments override values from the YAML config.
+Note on s2
+----------
+s2 works in physical (cos_theta, phi) coordinates with no standardisation.
+model.sample() returns physical coordinates directly.
+Normalisation stats (mean, std) are still computed for the NLL correction
+term during training, but are NOT applied to samples at inference time.
 """
 
 from __future__ import annotations
-
-import argparse
-import json
-import sys
+import argparse, sys
 from pathlib import Path
-
 import numpy as np
 import torch
 import yaml
 
 
-# ---------------------------------------------------------------------------
-# Argument parser
-# ---------------------------------------------------------------------------
-
-def build_parser() -> argparse.ArgumentParser:
+def build_parser():
     p = argparse.ArgumentParser(
         prog="hep_nsf",
-        description="HEP Neural Spline Flows — train, sample, evaluate, plot.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    # ── Config file ──────────────────────────────────────────────────────── #
-    p.add_argument("--config", type=str, default=None,
-                   help="Path to a YAML config file.  CLI args override YAML.")
+    p.add_argument("--config",   type=str, default=None)
+    p.add_argument("--mode",     choices=["train","sample","evaluate","plot"],
+                   default="train")
 
-    # ── Mode ─────────────────────────────────────────────────────────────── #
-    p.add_argument("--mode", choices=["train", "sample", "evaluate", "plot"],
-                   default="train",
-                   help="Execution mode.")
+    # Data
+    p.add_argument("--data",     required=True)
+    p.add_argument("--val_frac", type=float, default=0.2)
+    p.add_argument("--seed",     type=int,   default=42)
 
-    # ── Data ─────────────────────────────────────────────────────────────── #
-    data = p.add_argument_group("Data")
-    data.add_argument("--data", type=str, required=True,
-                      help="Path to the input JSON data file "
-                           "(list of [px,py,pz] vectors).")
-    data.add_argument("--val_frac", type=float, default=0.2,
-                      help="Fraction of data held out for validation.")
-    data.add_argument("--seed", type=int, default=42,
-                      help="Global random seed.")
+    # Model
+    p.add_argument("--model",    choices=["s2","r2","r3"], default="s2",
+                   help="s2=RecursiveSphereFlow (uniform S2 base), "
+                        "r2=AngularSphereFlow (Gaussian R2 base), "
+                        "r3=CartesianNSF (Gaussian R3 base)")
+    p.add_argument("--num_bins",    type=int,   default=32)
+    p.add_argument("--num_splines", type=int,   default=1)
+    p.add_argument("--bound",       type=float, default=5.0)
+    p.add_argument("--hidden_dim",  type=int,   default=64)
+    p.add_argument("--num_layers",  type=int,   default=2)
+    p.add_argument("--arch",        choices=["mlp","resnet"], default="mlp")
+    p.add_argument("--activation",
+                   choices=["relu","tanh","elu","leaky_relu","silu","gelu"],
+                   default="relu")
+    p.add_argument("--dropout",     type=float, default=0.0)
 
-    # ── Model ────────────────────────────────────────────────────────────── #
-    mdl = p.add_argument_group("Model")
-    mdl.add_argument("--model", choices=["s2", "r3", "s2_recursive"],
-                     default="s2",
-                     help="Flow architecture.  "
-                          "s2=angular S², r3=Cartesian R³, "
-                          "s2_recursive=parameter-only sphere.")
-    mdl.add_argument("--num_bins", type=int, default=32,
-                     help="Number of RQS bins per spline layer.")
-    mdl.add_argument("--num_splines", type=int, default=1,
-                     help="Number of stacked spline coupling blocks.  "
-                          "1 reproduces the original single-spline network; "
-                          "higher values increase expressiveness.")
-    mdl.add_argument("--bound", type=float, default=5.0,
-                     help="Spline domain half-width in standardised space.")
-    mdl.add_argument("--hidden_dim", type=int, default=64,
-                     help="Hidden dimension of conditioner MLPs.")
-    mdl.add_argument("--num_layers", type=int, default=2,
-                     help="Number of hidden layers (MLP) or residual "
-                          "blocks (ResNet) in each conditioner.")
-    mdl.add_argument("--arch", choices=["mlp", "resnet"], default="mlp",
-                     help="Conditioner network architecture.")
-    mdl.add_argument("--activation",
-                     choices=["relu", "tanh", "elu", "leaky_relu",
-                               "silu", "gelu"],
-                     default="relu",
-                     help="Activation function for conditioner networks.")
-    mdl.add_argument("--dropout", type=float, default=0.0,
-                     help="Dropout probability in conditioner networks.")
+    # Training
+    p.add_argument("--lr",               type=float, default=1e-3)
+    p.add_argument("--weight_decay",     type=float, default=0.0)
+    p.add_argument("--batch_size",       type=int,   default=8192)
+    p.add_argument("--epochs",           type=int,   default=10_000)
+    p.add_argument("--patience",         type=int,   default=20)
+    p.add_argument("--ema_alpha",        type=float, default=0.3)
+    p.add_argument("--clip_grad",        type=float, default=5.0)
+    p.add_argument("--use_plateau",      action="store_true", default=True)
+    p.add_argument("--no_plateau",       dest="use_plateau", action="store_false")
+    p.add_argument("--plateau_factor",   type=float, default=0.5)
+    p.add_argument("--plateau_patience", type=int,   default=10)
+    p.add_argument("--use_cosine",       action="store_true", default=False)
+    p.add_argument("--cosine_t_max",     type=int,   default=500)
+    p.add_argument("--log_every",        type=int,   default=10)
+    p.add_argument("--resume_from",      type=str,   default=None)
 
-    # ── Training ─────────────────────────────────────────────────────────── #
-    trn = p.add_argument_group("Training")
-    trn.add_argument("--lr", type=float, default=1e-3,
-                     help="Initial learning rate.")
-    trn.add_argument("--weight_decay", type=float, default=0.0,
-                     help="L2 weight decay for Adam.")
-    trn.add_argument("--batch_size", type=int, default=8192,
-                     help="Training batch size.")
-    trn.add_argument("--epochs", type=int, default=10_000,
-                     help="Maximum training epochs.")
-    trn.add_argument("--patience", type=int, default=20,
-                     help="Early-stopping patience (epochs).")
-    trn.add_argument("--ema_alpha", type=float, default=0.3,
-                     help="EMA smoothing factor for validation loss.")
-    trn.add_argument("--clip_grad", type=float, default=5.0,
-                     help="Gradient clipping max-norm.")
-    trn.add_argument("--use_plateau", action="store_true", default=True,
-                     help="Use ReduceLROnPlateau scheduler.")
-    trn.add_argument("--no_plateau", dest="use_plateau", action="store_false",
-                     help="Disable ReduceLROnPlateau.")
-    trn.add_argument("--plateau_factor", type=float, default=0.5,
-                     help="LR reduction factor for plateau scheduler.")
-    trn.add_argument("--plateau_patience", type=int, default=10,
-                     help="Patience for plateau LR reduction.")
-    trn.add_argument("--use_cosine", action="store_true", default=False,
-                     help="Add cosine-annealing LR scheduler.")
-    trn.add_argument("--cosine_t_max", type=int, default=500,
-                     help="Period for cosine annealing.")
-    trn.add_argument("--log_every", type=int, default=10,
-                     help="Print training status every N epochs.")
-    trn.add_argument("--resume_from", type=str, default=None,
-                     help="Path to a checkpoint to resume training from.")
+    # I/O
+    p.add_argument("--run_name",    type=str, default="model")
+    p.add_argument("--save_dir",    type=str, default="checkpoints")
+    p.add_argument("--output_dir",  type=str, default="outputs")
+    p.add_argument("--checkpoint",  type=str, default=None)
 
-    # ── I/O ──────────────────────────────────────────────────────────────── #
-    io = p.add_argument_group("I/O")
-    io.add_argument("--run_name", type=str, default="model",
-                    help="Identifier prefix for checkpoint and loss files.")
-    io.add_argument("--save_dir", type=str, default="checkpoints",
-                    help="Directory for checkpoints and loss JSON files.")
-    io.add_argument("--output_dir", type=str, default="outputs",
-                    help="Directory for plots and generated samples.")
-    io.add_argument("--checkpoint", type=str, default=None,
-                    help="Checkpoint path (required for sample/evaluate/plot).")
+    # Sampling
+    p.add_argument("--num_samples", type=int,   default=10_000)
+    p.add_argument("--target_r",    type=float, default=500.0)
 
-    # ── Sampling ─────────────────────────────────────────────────────────── #
-    spl = p.add_argument_group("Sampling")
-    spl.add_argument("--num_samples", type=int, default=10_000,
-                     help="Number of samples to generate.")
-    spl.add_argument("--target_r", type=float, default=500.0,
-                     help="Momentum magnitude (GeV) assumed when back-"
-                          "converting angular samples to Cartesian.")
-
-    # ── Device ───────────────────────────────────────────────────────────── #
-    p.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"],
-                   default="auto",
-                   help="Compute device.")
-
-    # ── Plotting ─────────────────────────────────────────────────────────── #
-    plt_g = p.add_argument_group("Plotting")
-    plt_g.add_argument("--no_plots", action="store_true", default=False,
-                       help="Suppress all plot generation.")
-    plt_g.add_argument("--dpi", type=int, default=400,
-                       help="DPI for saved figures.")
+    # Device / plotting
+    p.add_argument("--device",   choices=["auto","cpu","cuda","mps"], default="auto")
+    p.add_argument("--no_plots", action="store_true", default=False)
+    p.add_argument("--dpi",      type=int, default=400)
 
     return p
 
 
-# ---------------------------------------------------------------------------
-# YAML config loading
-# ---------------------------------------------------------------------------
-
-def load_yaml_config(path: str) -> dict:
-    with open(path, "r") as f:
+def load_yaml_config(path):
+    with open(path) as f:
         return yaml.safe_load(f)
 
 
-def merge_config(args: argparse.Namespace,
-                 yaml_cfg: dict) -> argparse.Namespace:
-    """Override argparse defaults with YAML values, unless CLI was explicit."""
-    # argparse does not distinguish 'set by user' vs 'default'.
-    # We merge conservatively: YAML only fills values that equal the parser
-    # defaults (i.e. were not explicitly provided on the command line).
+def merge_config(args, yaml_cfg):
     parser   = build_parser()
-    defaults = vars(parser.parse_args([
-        "--data", args.data or "dummy",  # need a required arg
-    ]))
-    for key, yaml_val in yaml_cfg.items():
-        if key in defaults and vars(args)[key] == defaults[key]:
-            setattr(args, key, yaml_val)
+    defaults = vars(parser.parse_args(["--data", args.data or "dummy"]))
+    for k, v in yaml_cfg.items():
+        if k in defaults and vars(args)[k] == defaults[k]:
+            setattr(args, k, v)
     return args
 
 
 # ---------------------------------------------------------------------------
-# Preprocessing helper  (shared across modes)
+# Data preparation
 # ---------------------------------------------------------------------------
 
-def _prepare_data(args: argparse.Namespace):
-    """Load data and return normalised tensor + stats."""
+def _prepare_data(args, model_type=None):
     from hep_nsf.utils import (load_json_data, normalise,
                                 cartesian_to_spherical, set_seed)
     set_seed(args.seed)
+    mtype = model_type or args.model
+    raw   = load_json_data(args.data)
 
-    raw = load_json_data(args.data)  # (N, 3) Cartesian
-
-    if args.model in ("s2", "s2_recursive"):
-        # Project to unit sphere → (cos θ, φ)
+    if mtype in ("s2", "r2"):
         data = cartesian_to_spherical(raw, phi_range="0_2pi")
     else:
-        # R³: work directly in Cartesian
         data = raw
 
-    data_norm, mean, std = normalise(data)
-    return data_norm, mean, std, data
+    if mtype == "s2":
+        # s2 works in physical (cos_theta, phi) space — NO normalisation.
+        # mean=0, std=1 so std_correction=0 and denormalise is identity.
+        import torch
+        mean = torch.zeros(1, 2)
+        std  = torch.ones(1, 2)
+        return data, mean, std, data, raw
+    else:
+        data_norm, mean, std = normalise(data)
+        return data_norm, mean, std, data, raw
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint loader — self-describing, no architecture flags needed
+# ---------------------------------------------------------------------------
+
+def _load_model_from_checkpoint(checkpoint_path, args, device):
+    """Build and load a model entirely from checkpoint metadata.
+
+    The checkpoint stores model_type, num_bins, num_splines, bound,
+    hidden_dim — so no --model / --num_bins / --num_splines flags are
+    needed at sample/evaluate/plot time.
+    Falls back to CLI args if metadata is missing (old checkpoints).
+    """
+    from hep_nsf.networks import build_model
+    meta        = torch.load(checkpoint_path, map_location=device)
+    mtype       = meta.get("model_type",  args.model)
+    num_bins    = meta.get("num_bins",    args.num_bins)
+    num_splines = meta.get("num_splines", args.num_splines)
+    bound       = meta.get("bound",       args.bound)
+    hidden_dim  = meta.get("hidden_dim",  args.hidden_dim)
+
+    num_layers  = meta.get("num_layers", args.num_layers)
+    arch        = meta.get("arch",       args.arch)
+    activation  = meta.get("activation", args.activation)
+
+    kwargs = dict(num_bins=num_bins, num_splines=num_splines,
+                  hidden_dim=hidden_dim, num_layers=num_layers,
+                  arch=arch, activation=activation,
+                  dropout=args.dropout)
+    if mtype in ("r2", "r3") and bound is not None:
+        kwargs["bound"] = bound
+
+    model = build_model(mtype, **kwargs).to(device)
+    model.load_state_dict(meta["model_state"])
+    model.eval()
+    return model, mtype
+
+
+# ---------------------------------------------------------------------------
+# Shared sampling helper — handles s2 physical vs r2/r3 normalised
+# ---------------------------------------------------------------------------
+
+def _sample_physical(model, mtype, n, device, mean, std):
+    """Draw n samples and return physical-space tensor.
+
+    s2 : model.sample() already returns physical (cos_theta, phi).
+         No denormalisation needed.
+    r2 : model.sample() returns normalised coords. Denormalise.
+    r3 : model.sample() returns normalised coords. Denormalise.
+    """
+    from hep_nsf.utils import denormalise
+    with torch.no_grad():
+        z = model.sample(n, device=device)
+        if mtype == "s2":
+            return z          # already physical
+        else:
+            return denormalise(z, mean, std)
 
 
 # ---------------------------------------------------------------------------
 # Mode handlers
 # ---------------------------------------------------------------------------
 
-def run_train(args: argparse.Namespace) -> None:
+def run_train(args):
     from hep_nsf.networks import build_model
-    from hep_nsf.utils    import make_dataloaders
+    from hep_nsf.utils    import make_dataloaders, get_device
     from hep_nsf.train    import train_model
-    from hep_nsf.utils    import get_device
     from hep_nsf.analysis import model_summary
-    import hep_nsf.plotting as plt_mod
+    import hep_nsf.plotting as P
 
     device = get_device(args.device)
-    print(f"Device: {device}")
+    print(f"Device: {device}\n")
 
-    data_norm, mean, std, _ = _prepare_data(args)
-
+    data_norm, mean, std, data_phys, raw = _prepare_data(args)
     train_loader, val_loader = make_dataloaders(
         data_norm, batch_size=args.batch_size,
         val_frac=args.val_frac, seed=args.seed)
 
-    # Build model
-    model_kwargs = dict(
-        num_bins=args.num_bins,
-        num_splines=args.num_splines,
-        bound=args.bound,
-    )
-    if args.model != "s2_recursive":
-        model_kwargs.update(
-            hidden_dim=args.hidden_dim,
-            num_layers=args.num_layers,
-            arch=args.arch,
-            activation=args.activation,
-            dropout=args.dropout,
-        )
+    kwargs = dict(num_bins=args.num_bins, num_splines=args.num_splines,
+                  hidden_dim=args.hidden_dim, num_layers=args.num_layers,
+                  arch=args.arch, activation=args.activation,
+                  dropout=args.dropout)
+    if args.model in ("r2", "r3"):
+        kwargs["bound"] = args.bound
 
-    model = build_model(args.model, **model_kwargs)
+    model = build_model(args.model, **kwargs)
     model_summary(model, model_type=args.model)
 
     model, losses = train_model(
         model, train_loader, val_loader,
-        std_tensor=std,
-        device=device,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        max_epochs=args.epochs,
-        patience=args.patience,
-        ema_alpha=args.ema_alpha,
-        clip_grad=args.clip_grad,
-        use_plateau=args.use_plateau,
-        plateau_factor=args.plateau_factor,
+        std_tensor=std, device=device,
+        model_type=args.model,
+        num_layers=args.num_layers,
+        arch=args.arch,
+        activation=args.activation,
+        lr=args.lr, weight_decay=args.weight_decay,
+        max_epochs=args.epochs, patience=args.patience,
+        ema_alpha=args.ema_alpha, clip_grad=args.clip_grad,
+        use_plateau=args.use_plateau, plateau_factor=args.plateau_factor,
         plateau_patience=args.plateau_patience,
-        use_cosine=args.use_cosine,
-        cosine_t_max=args.cosine_t_max,
-        log_every=args.log_every,
-        save_dir=args.save_dir,
-        run_name=args.run_name,
-        resume_from=args.resume_from,
-    )
+        use_cosine=args.use_cosine, cosine_t_max=args.cosine_t_max,
+        log_every=args.log_every, save_dir=args.save_dir,
+        run_name=args.run_name, resume_from=args.resume_from)
 
     if not args.no_plots:
-        plt_mod.plot_loss_curves(losses["train"], losses["val"],
-                                 title=f"Training Curves — {args.run_name}",
-                                 output_dir=args.output_dir)
+        P.plot_loss_curves(losses["train"], losses["val"],
+                           title=f"Training Curves — {args.run_name}",
+                           output_dir=args.output_dir)
     print("Training complete.")
 
 
-def run_sample(args: argparse.Namespace) -> None:
-    from hep_nsf.networks  import build_model
-    from hep_nsf.utils     import (load_checkpoint, get_device,
-                                    denormalise, spherical_to_cartesian)
-    import hep_nsf.plotting as plt_mod
+def run_sample(args):
+    from hep_nsf.utils import get_device
+    import hep_nsf.plotting as P
 
     if args.checkpoint is None:
         sys.exit("--checkpoint is required for mode=sample")
 
     device = get_device(args.device)
-    data_norm, mean, std, data_phys = _prepare_data(args)
+    model, mtype = _load_model_from_checkpoint(args.checkpoint, args, device)
+    _, mean, std, data_phys, raw = _prepare_data(args, model_type=mtype)
 
-    model_kwargs = dict(
-        num_bins=args.num_bins,
-        num_splines=args.num_splines,
-        bound=args.bound,
-    )
-    if args.model != "s2_recursive":
-        model_kwargs.update(
-            hidden_dim=args.hidden_dim, num_layers=args.num_layers,
-            arch=args.arch, activation=args.activation, dropout=args.dropout)
-
-    model = build_model(args.model, **model_kwargs).to(device)
-    load_checkpoint(args.checkpoint, model, device=device)
-    model.eval()
-
-    # Generate samples
-    with torch.no_grad():
-        z_samples = model.sample(args.num_samples, device=device)
-        x_phys    = denormalise(z_samples, mean, std)
+    x_phys = _sample_physical(model, mtype, args.num_samples, device, mean, std)
 
     x_np = x_phys.cpu().numpy()
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
@@ -343,114 +268,144 @@ def run_sample(args: argparse.Namespace) -> None:
     print(f"Saved {args.num_samples} samples → {out_path}")
 
     if not args.no_plots:
-        labels = ([r"$\cos\theta$", r"$\phi$"]
-                  if args.model in ("s2", "s2_recursive")
-                  else [r"$p_x$", r"$p_y$", r"$p_z$"])
-        data_np = data_phys.numpy()[:args.num_samples]
-
-        plt_mod.plot_marginal_1d(
-            data_np, x_np, labels=labels,
-            title=f"1-D Marginals — {args.run_name}",
-            output_dir=args.output_dir)
-        plt_mod.plot_marginal_2d(
-            data_np, x_np, labels=labels,
-            title=f"2-D Marginals — {args.run_name}",
-            output_dir=args.output_dir)
-
-        if args.model in ("s2", "s2_recursive"):
-            from hep_nsf.utils import load_json_data, cartesian_to_spherical
-            raw = load_json_data(args.data)
-            cyl_data = cartesian_to_spherical(raw)
-            plt_mod.plot_mollweide_kde(cyl_data, "Data KDE",
-                                       output_dir=args.output_dir)
-            plt_mod.plot_mollweide_kde(
-                torch.tensor(x_np), "Flow KDE",
-                output_dir=args.output_dir)
-        else:
-            from hep_nsf.utils import load_json_data
-            raw = load_json_data(args.data)
-            plt_mod.plot_physics_comparison(
-                raw, torch.tensor(x_np),
-                title=f"Physics Comparison — {args.run_name}",
-                output_dir=args.output_dir)
-            plt_mod.plot_radius_distribution(
-                x_np, output_dir=args.output_dir)
+        _generate_all_plots(mtype, model, x_np, data_phys, raw,
+                            mean, std, device, args)
 
 
-def run_evaluate(args: argparse.Namespace) -> None:
-    from hep_nsf.networks  import build_model
-    from hep_nsf.utils     import (load_checkpoint, get_device,
-                                    denormalise, cartesian_to_spherical,
-                                    load_json_data)
-    from hep_nsf.analysis  import evaluate, consistency_report
+def run_evaluate(args):
+    from hep_nsf.utils   import (get_device, cartesian_to_spherical)
+    from hep_nsf.analysis import evaluate, consistency_report
 
     if args.checkpoint is None:
         sys.exit("--checkpoint is required for mode=evaluate")
 
     device = get_device(args.device)
-    data_norm, mean, std, data_phys = _prepare_data(args)
+    model, mtype = _load_model_from_checkpoint(args.checkpoint, args, device)
+    _, mean, std, data_phys, raw = _prepare_data(args, model_type=mtype)
 
-    model_kwargs = dict(
-        num_bins=args.num_bins, num_splines=args.num_splines,
-        bound=args.bound)
-    if args.model != "s2_recursive":
-        model_kwargs.update(
-            hidden_dim=args.hidden_dim, num_layers=args.num_layers,
-            arch=args.arch, activation=args.activation, dropout=args.dropout)
+    x_phys = _sample_physical(model, mtype, args.num_samples, device, mean, std)
 
-    model = build_model(args.model, **model_kwargs).to(device)
-    load_checkpoint(args.checkpoint, model, device=device)
-    model.eval()
-
-    with torch.no_grad():
-        z_samples = model.sample(args.num_samples, device=device)
-        x_phys    = denormalise(z_samples, mean, std)
-
-    raw = load_json_data(args.data)
-
-    if args.model in ("s2", "s2_recursive"):
-        cyl_d = cartesian_to_spherical(raw).numpy()
+    if mtype in ("s2", "r2"):
+        cyl_d = data_phys.numpy()
         cyl_s = x_phys.cpu().numpy()
-        evaluate(cyl_d[:, 0], cyl_d[:, 1],
-                 cyl_s[:, 0], cyl_s[:, 1])
-        consistency_report(torch.tensor(cyl_s), target_r=args.target_r)
     else:
-        from hep_nsf.utils import cartesian_to_spherical
         cyl_d = cartesian_to_spherical(raw).numpy()
         cyl_s = cartesian_to_spherical(x_phys.cpu()).numpy()
-        evaluate(cyl_d[:, 0], cyl_d[:, 1],
-                 cyl_s[:, 0], cyl_s[:, 1])
+
+    evaluate(cyl_d[:, 0], cyl_d[:, 1], cyl_s[:, 0], cyl_s[:, 1])
+    if mtype in ("s2", "r2"):
+        consistency_report(torch.tensor(cyl_s), target_r=args.target_r)
 
 
-def run_plot(args: argparse.Namespace) -> None:
+def run_plot(args):
     from hep_nsf.utils import load_losses
-    if args.checkpoint is not None:
-        loss_path = Path(args.checkpoint).with_name(
-            Path(args.checkpoint).stem.replace("_best", "_losses") + ".json")
-        if loss_path.exists():
-            losses = load_losses(loss_path)
-            import hep_nsf.plotting as plt_mod
-            plt_mod.plot_loss_curves(
-                losses["train"], losses["val"],
-                title="Training Curves",
-                output_dir=args.output_dir)
-            print(f"Saved loss curve → {args.output_dir}")
-    # Delegate to sample which also saves plots
+    if args.checkpoint is None:
+        sys.exit("--checkpoint is required for mode=plot")
+    loss_path = (Path(args.checkpoint)
+                 .with_name(Path(args.checkpoint).stem
+                            .replace("_best","_losses") + ".json"))
+    if loss_path.exists():
+        import hep_nsf.plotting as P
+        losses = load_losses(loss_path)
+        P.plot_loss_curves(losses["train"], losses["val"],
+                           title="Training Curves",
+                           output_dir=args.output_dir)
     run_sample(args)
+
+
+# ---------------------------------------------------------------------------
+# Shared plot dispatcher — called from run_sample and run_plot
+# ---------------------------------------------------------------------------
+
+def _generate_all_plots(mtype, model, x_np, data_phys, raw,
+                        mean, std, device, args):
+    import hep_nsf.plotting as P
+    from hep_nsf.utils import spherical_to_cartesian, cartesian_to_spherical
+
+    out = args.output_dir
+
+    if mtype in ("s2", "r2"):
+        ang_data  = data_phys.numpy()
+        ang_gen   = x_np
+        cart_data = raw.numpy()
+        cart_gen  = spherical_to_cartesian(
+            torch.tensor(x_np), r=args.target_r).numpy()
+    else:
+        cart_data = data_phys.numpy()
+        cart_gen  = x_np
+        ang_data  = cartesian_to_spherical(raw).numpy()
+        ang_gen   = cartesian_to_spherical(torch.tensor(x_np)).numpy()
+
+    P.plot_marginal_1d(ang_data, ang_gen,
+                       labels=[r"$\cos\theta$", r"$\phi$"],
+                       title=f"{mtype.upper()} Angular Marginals",
+                       save=f"{mtype}_marginals_angular_1d.png", output_dir=out)
+
+    P.plot_marginal_2d(ang_data, ang_gen,
+                       labels=[r"$\cos\theta$", r"$\phi$"],
+                       title=f"{mtype.upper()} Angular 2D",
+                       save=f"{mtype}_marginals_angular_2d.png", output_dir=out)
+
+    P.plot_marginal_1d(cart_data, cart_gen,
+                       labels=[r"$p_x$", r"$p_y$", r"$p_z$"],
+                       title=f"{mtype.upper()} Cartesian Marginals",
+                       save=f"{mtype}_marginals_cartesian_1d.png", output_dir=out)
+
+    P.plot_marginal_2d(cart_data, cart_gen,
+                       labels=[r"$p_x$", r"$p_y$", r"$p_z$"],
+                       title=f"{mtype.upper()} Cartesian 2D",
+                       save=f"{mtype}_marginals_cartesian_2d.png", output_dir=out)
+
+    P.plot_mollweide_kde(torch.tensor(ang_data),
+                         title=f"{mtype.upper()} Data KDE",
+                         save=f"{mtype}_mollweide_data.png", output_dir=out)
+    P.plot_mollweide_kde(torch.tensor(ang_gen),
+                         title=f"{mtype.upper()} Flow KDE",
+                         save=f"{mtype}_mollweide_flow.png", output_dir=out)
+
+    P.plot_physics_comparison(
+        torch.tensor(cart_data), torch.tensor(cart_gen),
+        title=f"{mtype.upper()} Physics Comparison",
+        save=f"{mtype}_physics_comparison.png", output_dir=out)
+
+    # Radius distribution only for r3
+    if mtype == "r3":
+        P.plot_radius_distribution(
+            cart_gen,
+            title=f"{mtype.upper()} |p| Distribution",
+            save=f"{mtype}_radius_dist.png", output_dir=out)
+
+    # Base mapping
+    if mtype == "s2":
+        P.plot_base_mapping_s2(model, device, mean, std,
+                                title="S2 Base Mapping",
+                                save="s2_base_mapping.png", output_dir=out)
+    elif mtype == "r2":
+        P.plot_base_mapping(model, device, mean, std, dim=2,
+                            title="R2 Base Mapping",
+                            save="r2_base_mapping.png", output_dir=out)
+
+    # Jacobian map
+    if mtype in ("s2", "r2"):
+        P.plot_jacobian_map(model, device, mean, std,
+                            title=f"{mtype.upper()} Jacobian Map",
+                            save=f"{mtype}_jacobian_map.png", output_dir=out)
+    else:
+        P.plot_jacobian_map_r3(model, device, mean, std,
+                                title="R3 Jacobian Map",
+                                save="r3_jacobian_map.png", output_dir=out)
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main(argv=None) -> None:
+def main(argv=None):
     parser = build_parser()
     args   = parser.parse_args(argv)
 
-    # Load YAML config if provided
-    if args.config is not None:
-        yaml_cfg = load_yaml_config(args.config)
-        args = merge_config(args, yaml_cfg)
+    if args.config:
+        args = merge_config(args, load_yaml_config(args.config))
 
     print("=" * 60)
     print(" HEP Neural Spline Flow")
@@ -460,14 +415,11 @@ def main(argv=None) -> None:
     print(f" Bins      : {args.num_bins}   Splines: {args.num_splines}")
     print("=" * 60 + "\n")
 
-    if args.mode == "train":
-        run_train(args)
-    elif args.mode == "sample":
-        run_sample(args)
-    elif args.mode == "evaluate":
-        run_evaluate(args)
-    elif args.mode == "plot":
-        run_plot(args)
+    dispatch = {"train":    run_train,
+                "sample":   run_sample,
+                "evaluate": run_evaluate,
+                "plot":     run_plot}
+    dispatch[args.mode](args)
 
 
 if __name__ == "__main__":

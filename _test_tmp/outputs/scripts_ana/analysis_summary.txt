@@ -1,0 +1,30 @@
+HEP Neural Spline Flows — Analysis Summary
+
+Model naming:
+  s2 = RecursiveSphereFlow  physical (cos_theta,phi)  uniform S2 base
+  r2 = AngularSphereFlow    standardised (cos_theta,phi)  Gaussian R2
+  r3 = CartesianNSF         standardised (px,py,pz)  Gaussian R3
+
++----------------------+------------------+------------------+
+| Metric               |        R2        |        R3        |
++----------------------+------------------+------------------+
+| KL (nats)            |      0.1700      |      0.0369      |
+| ESS%                 |      88.1%       |      20.8%       |
+| W1 cos θ             |    1.852e-01     |    7.090e-02     |
+| W1 φ                 |    1.672e-01     |    1.341e-01     |
+| JSD cos θ            |    2.000e-01     |    1.529e-01     |
+| JSD φ                |    1.267e-01     |    1.732e-01     |
+| W1 px                |    4.479e+01     |    5.361e+01     |
+| W1 py                |    2.687e+01     |    3.445e+01     |
+| W1 pz                |    9.261e+01     |    5.863e+01     |
+| Unphysical %         |      16.00%      |      0.00%       |
+| Radius mean (GeV)    |      500.0       |      527.2       |
+| Radius std  (GeV)    |       0.0        |      164.1       |
+| Params               |       914        |      1,355       |
++----------------------+------------------+------------------+
+
+Guide:
+  KL   : lower is better. 0 = perfect.
+  ESS% : higher is better. 100% = perfect.
+  W1   : earth-mover distance. lower is better.
+  JSD  : 0=identical, ln2=worst.
